@@ -16,35 +16,35 @@ settings = {
     "time_of_day": "morning"
 }
 
-# === TIME OF DAY ===
-current_hour = datetime.datetime.now().hour
-if 5 <= current_hour < 12:
+# === TIME OF DAY DETECTION ===
+hour = datetime.datetime.now().hour
+if 5 <= hour < 12:
     settings["time_of_day"] = "morning"
-elif 12 <= current_hour < 18:
+elif 12 <= hour < 18:
     settings["time_of_day"] = "afternoon"
 else:
     settings["time_of_day"] = "evening"
 
-# === INIT TTS ENGINE ===
+# === TTS ENGINE SETUP ===
 engine = pyttsx3.init()
 engine.setProperty("rate", 170)
 engine.setProperty("volume", 1.0)
 
-# === INIT LLaMA MODEL ===
+# === LOAD LLaMA MODEL ===
 llm = Llama(model_path="model.gguf", n_ctx=2048)
 
 # === EMOTION DETECTION ===
 def detect_emotion(text):
     text = text.lower()
-    if any(w in text for w in ["sad", "depressed", "cry", "unhappy"]):
+    if any(word in text for word in ["sad", "depressed", "unhappy", "cry"]):
         return "sad"
-    elif any(w in text for w in ["angry", "mad", "frustrated"]):
+    elif any(word in text for word in ["angry", "mad", "frustrated"]):
         return "angry"
-    elif any(w in text for w in ["happy", "great", "joy", "awesome", "love"]):
+    elif any(word in text for word in ["happy", "great", "awesome", "love", "joy"]):
         return "happy"
     return "neutral"
 
-# === EMOTION WRAPPER ===
+# === EMOTION-WRAPPED RESPONSE ===
 def emotion_wrap(response, emotion):
     if emotion == "sad":
         return "I'm really sorry to hear that. " + response
@@ -54,7 +54,7 @@ def emotion_wrap(response, emotion):
         return "Yay! That's wonderful! " + response
     return response
 
-# === SPEAK OUTPUT (Safe) ===
+# === THREAD-SAFE SPEAK ===
 speak_lock = threading.Lock()
 speak_interrupted = threading.Event()
 
@@ -62,7 +62,7 @@ def speak_output(text):
     with speak_lock:
         speak_interrupted.clear()
 
-        def monitor_interrupt():
+        def interrupt_watch():
             while not speak_interrupted.is_set():
                 time.sleep(0.1)
             try:
@@ -70,20 +70,20 @@ def speak_output(text):
             except RuntimeError:
                 pass
 
-        interrupt_thread = threading.Thread(target=monitor_interrupt)
-        interrupt_thread.start()
+        t = threading.Thread(target=interrupt_watch)
+        t.start()
 
         try:
             engine.say(text)
             engine.runAndWait()
         except RuntimeError as e:
-            print("⚠️ TTS Error:", e)
+            print("⚠️ TTS error:", e)
 
-# === LISTEN TO VOICE ===
+# === VOICE INPUT ===
 def get_voice_input(timeout=8, phrase_time_limit=10):
     recognizer = sr.Recognizer()
     with sr.Microphone() as source:
-        print("🎤 Listening... (say 'stop' to exit, 'next' to skip, 'change to text')")
+        print("🎤 Listening... (say 'stop' to exit, 'next' to skip, or 'change to text')")
         recognizer.adjust_for_ambient_noise(source)
         try:
             audio = recognizer.listen(source, timeout=timeout, phrase_time_limit=phrase_time_limit)
@@ -93,21 +93,21 @@ def get_voice_input(timeout=8, phrase_time_limit=10):
         except sr.WaitTimeoutError:
             print("⏳ No voice detected.")
         except sr.UnknownValueError:
-            print("🤷 Couldn't understand. Try again.")
+            print("🤷 Could not understand.")
         except sr.RequestError as e:
-            print(f"[ERROR] Voice recognition error: {e}")
+            print(f"[ERROR] Speech API: {e}")
     return None
 
 # === LLaMA RESPONSE ===
 def ask_llama(prompt):
     print("🧠 Thinking...")
-    output = llm.create_completion(
+    result = llm.create_completion(
         prompt=f"User: {prompt}\nAI:",
         max_tokens=200,
         stop=["User:", "AI:"],
         temperature=0.7
     )
-    return output["choices"][0]["text"].strip()
+    return result["choices"][0]["text"].strip()
 
 # === GREETING ===
 def greet_user():
@@ -115,13 +115,7 @@ def greet_user():
     print(greeting)
     speak_output(greeting)
 
-# === INPUT METHOD SWITCH ===
-def get_input_method():
-    print("Select input method:\n1. Text\n2. Voice")
-    choice = input("Enter 1 or 2: ").strip()
-    settings["input_method"] = "text" if choice == "1" else "voice"
-
-# === HANDLE EMOTION PROMPT ===
+# === EMOTION PROMPT HANDLER ===
 def handle_emotion_prompt(emotion):
     if emotion == "sad":
         speak_output("You sound down. I'm here for you.")
@@ -130,16 +124,15 @@ def handle_emotion_prompt(emotion):
     elif emotion == "happy":
         speak_output("That's awesome! Tell me what's going well.")
 
-# === HANDLE RESPONSE ===
+# === HANDLE RESPONSE FLOW ===
 def run_response(user_input):
-    # Split into multiple questions
     questions = [q.strip() for q in re.split(r'[.?!]', user_input) if q.strip()]
     final_response = ""
 
     for i, question in enumerate(questions):
         emotion = detect_emotion(question)
         print(f"\n➡️ Question {i + 1}: {question}")
-        print(f"[Emotion Detected]: {emotion}")
+        print(f"[Detected emotion]: {emotion}")
         handle_emotion_prompt(emotion)
 
         response = ask_llama(question)
@@ -148,28 +141,37 @@ def run_response(user_input):
         print(f"🤖 AI: {wrapped_response}")
         final_response += wrapped_response + " "
 
-    # Speak all responses
+    # Speak all
     tts_thread = threading.Thread(target=speak_output, args=(final_response.strip(),))
     tts_thread.start()
 
     if settings["input_method"] == "text":
-        print("\n[Press ENTER to stop speaking early or wait for it to finish]")
+        print("[Press ENTER to interrupt speech or wait to finish]")
         input()
         speak_interrupted.set()
     else:
-        print("[Say 'next' or 'stop' to interrupt]")
+        print("[Say 'next' or 'stop' to interrupt speech]")
 
     tts_thread.join()
 
-# === SHUTDOWN HANDLER ===
+# === CLEAN EXIT ===
 stop_event = threading.Event()
 
 def handle_signal(sig, frame):
-    print("\n[INFO] Ctrl+C pressed. Exiting.")
+    print("\n[INFO] Exiting via Ctrl+C.")
     stop_event.set()
     sys.exit(0)
 
 signal.signal(signal.SIGINT, handle_signal)
+
+# === INPUT METHOD CHOICE ===
+def get_input_method():
+    print("Select input method:\n1. Text\n2. Voice")
+    choice = input("Enter 1 or 2: ").strip()
+    if choice == "1":
+        settings["input_method"] = "text"
+    else:
+        settings["input_method"] = "voice"
 
 # === MAIN LOOP ===
 def main():
@@ -193,7 +195,7 @@ def main():
                 speak_output("Switched to voice mode.")
                 continue
 
-        else:
+        else:  # Voice mode
             user_input = get_voice_input()
             if not user_input:
                 continue
@@ -203,7 +205,7 @@ def main():
                 break
             elif "next" in user_input.lower():
                 speak_interrupted.set()
-                print("⏭ Skipping to next...")
+                print("⏭ Skipping current response...")
                 continue
             elif "change to text" in user_input.lower():
                 settings["input_method"] = "text"

@@ -9,3 +9,5 @@ nltk
 scipy
 streamlit
 gtts
+SpeechRecognition
+pydub

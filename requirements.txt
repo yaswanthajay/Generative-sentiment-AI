@@ -7,3 +7,4 @@ pyaudio
 text2emotion
 nltk
 scipy
+streamlit

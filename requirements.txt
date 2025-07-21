@@ -1,0 +1,9 @@
+torch
+pyttsx3
+llama-cpp-python
+faster-whisper
+speechrecognition
+pyaudio
+text2emotion
+nltk
+scipy
